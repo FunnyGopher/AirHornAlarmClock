@@ -1,34 +1,17 @@
-import RPi.GPIO as GPIO
 from time import sleep
+import serial
 
-GPIO.setmode(GPIO.BOARD)
-GPIO.setup(23, GPIO.OUT)
-GPIO.setup(16, GPIO.OUT)
-
-green = GPIO.PWM(16, 100)
-#red = GPIO.PWM(23, 100)
-
-green.start(0)
-#red.start(100)
-
-sleep(2)
-
-pause = 0.02
-
-GPIO.output(23, GPIO.HIGH)
+ser = serial.Serial('/dev/ttyAMA0', 9600)
 
 try:
     while True:
-        for i in range(101):
-            green.ChangeDutyCycle(i)
- #           red.ChangeDutyCycle(100 - i)
+        for i in range(181):
+            ser.write(str(i))
             sleep(pause)
-        for i in range(100, -1, -1):
-            green.ChangeDutyCycle(i)
-  #          red.ChangeDutyCycle(100 - i)
+        for i in range(180, -1, -1):
+            ser.write(str(i))
+            sleep(pause)
             sleep(pause)
 
 except KeyboardInterrupt:
-    green.stop()
-   # red.stop()
-    GPIO.cleanup()
+    print('You stopped me!')
