@@ -70,7 +70,17 @@ letters = {
     'w' : '9bef',
     'x' : 'b63e',
     'y' : '401fd',
-    'z' : '8ba'
+    'z' : '8ba',
+    '0' : '12579adf',
+    '1' : '31f',
+    '2' : '521089ad',
+    '3' : '5210fda',
+    '4' : '7801f',
+    '5' : '25780fda',
+    '6' : '780fda9',
+    '7' : '523c',
+    '8' : '752180fda9',
+    '9' : '521087f'
 }
 
 def segmentreader(segmentstream):
@@ -132,7 +142,7 @@ try:
     setup()
     clear()
     ###############
-    for i in 'Brandon':
+    for i in "0123456789":
         writebitnumber(segmentreader(letters[i]), 16)
         sleep(.8)
     sleep(1)

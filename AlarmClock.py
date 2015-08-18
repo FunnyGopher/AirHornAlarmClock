@@ -2,12 +2,12 @@ import RPi.GPIO as GPIO
 from time import sleep
 import datetime
 
-
 class ClockDisplay:
-    def __init__(self, shift_register, numb_of_displays):
+    def __init__(self, shift_register):
         self.shift_register = shift_register
-        self.numb_of_displays = numb_of_displays
-
+        self.displays = 5
+        self.curr_display= 0
+        
         self.chars = {
             'A': '13b0f',
             'B': '52140fcda',
@@ -71,39 +71,43 @@ class ClockDisplay:
             '7': '523c',
             '8': '752180fda9',
             '9': '521087f',
-            ' ': '0'
+            ' ': ''
         }
 
     def charToSegment(self, char):
         value = 0
-        for i in char: #52140fcda
+        for i in char:
             power = int(i, 16)
             value += pow(2, power)
         return value
 
     def clear(self):
-        self.shift_register.writestream((0 for x in range(80)), self.shift_register.bits)
+        clear_string = ""
+        for i in range(self.shift_register.bits):
+            clear_string += '0'
+        self.shift_register.writestream(clear_string, self.shift_register.bits)
 
-    def write(self, text): #0130
+    def writeText(self, text):
         bin_output = ""
         for i in text:
             hexcode = self.chars[i]
             dec = self.charToSegment(hexcode)
-            bincode = bin(dec)[2:]
-            bincode.zfill(16)
 
-            '''
+            if i == ' ':
+                dec = 0
+                
+            bincode = bin(dec)[2:]
+
             if len(bincode) < 16:
                 dif = 16 - len(bincode)
                 for i in range(dif):
                     bincode = '0' + bincode
-            '''
-
+            
             bin_output += bincode
-
-        self.shift_register.writestream(bin_output)
-
-
+        self.shift_register.multiplexwritestream(bin_output, self.curr_display, self.displays)
+        self.curr_display +=1
+        if self.curr_display >= self.displays:
+            self.curr_display = 0
 
 class Button:
     def __init__(self, pin, light_pin):
@@ -111,6 +115,7 @@ class Button:
         self.light_pin = light_pin
 
         self.lastValue = False
+        self.down = False
 
         GPIO.setup(self.pin, GPIO.IN)
         GPIO.setup(self.light_pin, GPIO.OUT)
@@ -130,8 +135,11 @@ class Button:
     def lightoff(self):
         GPIO.output(self.light_pin, 0)
 
+    def update(self):
+        self.down = self.isdown()
+
     def updatelast(self):
-        self.lastValue = self.isdown()
+        self.lastValue = self.down
 
 
 class ShiftRegister:
@@ -145,86 +153,142 @@ class ShiftRegister:
         GPIO.setup(self.latch_pin, GPIO.OUT)
         GPIO.setup(self.clock_pin, GPIO.OUT)
 
-        GPIO.output(self.shift_register.data_pin, GPIO.LOW)
-        GPIO.output(self.shift_register.latch_pin, GPIO.LOW)
-        GPIO.output(self.shift_register.clock_pin, GPIO.LOW)
+        GPIO.output(self.data_pin, GPIO.LOW)
+        GPIO.output(self.latch_pin, GPIO.LOW)
+        GPIO.output(self.clock_pin, GPIO.LOW)
 
     def writestream(self, streamofbits):
         for bit in streamofbits:
             self.write(int(bit))
         self.out()
 
+    def multiplexwritestream(self, streamofbits, curr_display, displays):
+        firstindex = curr_display * 16
+        secondindex = firstindex + 16
+        keeperbits = streamofbits[firstindex:secondindex]
+        zerosafter = (displays - curr_display - 1) * 16
+        
+        zerosbeforestring = ""
+        for i in range(firstindex):
+            zerosbeforestring += '0'
+
+        zerosafterstring = ""
+        for i in range(zerosafter):
+            zerosafterstring += '0'
+
+        newstreamofbits = zerosbeforestring + keeperbits + zerosafterstring
+        self.writestream(newstreamofbits)
+
+        curr_display += 1
+        if(curr_display >= displays):
+            curr_display = 0
+
     def write(self, on, flipped=True):
         if (flipped):
             on = not on
-        GPIO.output(self.shift_register.data_pin, on)
-        GPIO.output(self.shift_register.clock_pin, 1)
-        GPIO.output(self.shift_register.clock_pin, 0)
-        GPIO.output(self.shift_register.data_pin, 0)
+        GPIO.output(self.data_pin, on)
+        GPIO.output(self.clock_pin, 1)
+        GPIO.output(self.clock_pin, 0)
+        GPIO.output(self.data_pin, 0)
 
     def out(self):
-        GPIO.output(self.shift_register.latch_pin, 1)
-        sleep(.1)
-        GPIO.output(self.shift_register.latch_pin, 0)
+        GPIO.output(self.latch_pin, 1)
+        #sleep(.1)
+        GPIO.output(self.latch_pin, 0)
 
     def clear(self):
-        zeros = str(0).zfill(80)
+        zeros = ""
+        for i in range(self.bits):
+            zeros += '0'
         self.writestream(zeros)
 
 class AlarmClock:
     def __init__(self):
         self.time_minute = 0
-        self.time_hour = 12
+        self.time_hour = 0 # saved in military time, easier to use
 
         self.alarm_minute = 0
-        self.alarm_hour = 12
+        self.alarm_hour = 0 # saved in military time easier to use
 
-        self.btn_minute = Button()
-        self.btn_hour = Button()
-        self.btn_snooze = Button()
-        self.btn_alarm = Button()
-        self.btn_time = Button()
+        self.military_time = False
+        
+        self.btn_minute = Button(6, 2)
+        self.btn_hour = Button(3, 4)
+        self.btn_snooze = Button(5, 18)
+        self.btn_alarm = Button(19, 8)
+        self.btn_time = Button(9, 10)
         self.buttons = [self.btn_minute, self.btn_hour, self.btn_snooze, self.btn_alarm, self.btn_time]
-
-        self.shift_register = ShiftRegister(21, 16, 12)
-        self.display = ClockDisplay()
+        
+        shift_register = ShiftRegister(21, 16, 12, 80)
+        self.display = ClockDisplay(shift_register)
 
     def addminute(self, minute):
         minute += 1
         if minute > 59:
             minute = 0
 
+        return minute
+
     def addhour(self, hour):
         hour += 1
-        if hour > 12:
-            hour = 1
+        return hour
 
     def cleardisplay(self):
         self.shift_register.clear()
 
+    def formattime(self, hours, minutes):
+        ampm = "A"
+        if hours >= 12:
+            ampm = "P"
+            
+        if not self.military_time:
+            if hours == 0:
+                hours = 12
+            if hours > 12:
+                hours -= 12
+        else:
+            if hours > 23:
+                hours %= 24
+
+        if minutes > 59:
+            minutes %= 60
+
+        # Blanks out the first display if the hour is a single digit
+        hour_string = str(hours)
+        if hours < 10:
+            hour_string = ' ' + hour_string
+
+        # Adds a 0 if the minute is a single digit
+        minute_string = str(minutes)
+        if minutes < 10:
+            minute_string = '0' + minute_string
+            
+        time_string = hour_string + minute_string + ampm
+        return time_string
+
     def update(self):
+        for btn in self.buttons:
+            btn.update()
+            
         if self.btn_time.isheld():
             if self.btn_minute.ispressed():
-                self.addminute(self.time_minute)
+                self.time_minute = self.addminute(self.time_minute)
             if self.btn_hour.ispressed():
-                self.addhour(self.time_hour)
-
-        elif self.btn_alarm.isheld():
+                self.time_hour = self.addhour(self.time_hour)
+        
+        if self.btn_alarm.isheld():
             if self.btn_minute.ispressed():
-                self.addminute(self.alarm_minute)
+                self.alarm_minute = self.addminute(self.alarm_minute)
             if self.btn_hour.ispressed():
-                self.addhour(self.alarm_hour)
+                self.alrm_hour =self.addhour(self.alarm_hour)
 
-            hour_string = str(self.alarm_hour)
-            if self.alarm_hour < 10:
-                hour_string = ' ' + hour_string
-
-            time_string = hour_string + str(self.alarm_minute).zfill(2)
-            self.display.write(time_string)
+            self.display.writeText(self.formattime(self.alarm_hour, self.alarm_minute))      
         else:
-            format_string = '%H%M'
-            time_string = datetime.datetime.now().strftime(format_string)
-            self.display.write(" 130")
+            d = datetime.datetime.now()
+            hours = d.hour + self.time_hour
+            minutes = d.minute + self.time_minute
+            time_string = self.formattime(hours, minutes)
+            self.display.writeText(time_string)
 
 
     def updatelast(self):
@@ -232,12 +296,17 @@ class AlarmClock:
             btn.updatelast()
 
 def main():
+    GPIO.setmode(GPIO.BCM)
     try:
+        alarm_clock = AlarmClock()
         while True:
-            alarm_clock = AlarmClock()
             alarm_clock.update()
             alarm_clock.updatelast()
+            sleep(.0000001)
 
     except KeyboardInterrupt:
         alarm_clock.cleardisplay()
         GPIO.cleanup()
+        
+main()
+GPIO.cleanup()
