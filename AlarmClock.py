@@ -1,12 +1,15 @@
 import RPi.GPIO as GPIO
 from time import sleep
 import datetime
+import serial
+import math
 
 class ClockDisplay:
     def __init__(self, shift_register):
         self.shift_register = shift_register
-        self.displays = 5
+        self.displays = 6
         self.curr_display= 0
+        self.show_dots = True
         
         self.chars = {
             'A': '13b0f',
@@ -71,7 +74,8 @@ class ClockDisplay:
             '7': '523c',
             '8': '752180fda9',
             '9': '521087f',
-            ' ': ''
+            ' ': '',
+            ':': ''
         }
 
     def charToSegment(self, char):
@@ -89,13 +93,19 @@ class ClockDisplay:
 
     def writeText(self, text):
         bin_output = ""
+        
+        if self.show_dots:
+            text = ':'+ text
+        else:
+            text = ' ' + text;
+            
         for i in text:
             hexcode = self.chars[i]
             dec = self.charToSegment(hexcode)
-
+            if i == ':':
+                dec = 3
             if i == ' ':
                 dec = 0
-                
             bincode = bin(dec)[2:]
 
             if len(bincode) < 16:
@@ -104,7 +114,9 @@ class ClockDisplay:
                     bincode = '0' + bincode
             
             bin_output += bincode
-        self.shift_register.multiplexwritestream(bin_output, self.curr_display, self.displays)
+            
+        #self.shift_register.multiplexwritestream(bin_output, self.curr_display, self.displays)
+        self.shift_register.writestream(bin_output)
         self.curr_display +=1
         if self.curr_display >= self.displays:
             self.curr_display = 0
@@ -211,12 +223,18 @@ class AlarmClock:
         self.alarm_hour = 0 # saved in military time easier to use
 
         self.military_time = False
+        self.alarm_active = False
         
+        try:
+            self.servo = serial.Serial("/dev/ttyACM0", 9600)
+        except: 
+            self.servo = serial.Serial("/dev/ttyACM1", 9600)
+            
         self.btn_minute = Button(6, 2)
-        self.btn_hour = Button(3, 4)
-        self.btn_snooze = Button(5, 18)
+        self.btn_hour = Button(22, 25)
+        self.btn_snooze = Button(4, 18)
         self.btn_alarm = Button(19, 8)
-        self.btn_time = Button(9, 10)
+        self.btn_time = Button(17, 10)
         self.buttons = [self.btn_minute, self.btn_hour, self.btn_snooze, self.btn_alarm, self.btn_time]
         
         shift_register = ShiftRegister(21, 16, 12, 80)
@@ -231,21 +249,27 @@ class AlarmClock:
 
     def addhour(self, hour):
         hour += 1
+        if hour > 23:
+            hour = 0
         return hour
 
     def cleardisplay(self):
         self.shift_register.clear()
 
+    def rotateservo(self, degrees):
+        self.servo.write(bytes(str(int(degrees)), "UTF-8"))
+        sleep(.1)
+
     def formattime(self, hours, minutes):
         ampm = "A"
         if hours >= 12:
-            ampm = "P"
+            ampm = "P"            
             
         if not self.military_time:
             if hours == 0:
                 hours = 12
             if hours > 12:
-                hours -= 12
+                hours %= 12
         else:
             if hours > 23:
                 hours %= 24
@@ -262,7 +286,7 @@ class AlarmClock:
         minute_string = str(minutes)
         if minutes < 10:
             minute_string = '0' + minute_string
-            
+
         time_string = hour_string + minute_string + ampm
         return time_string
 
@@ -280,7 +304,7 @@ class AlarmClock:
             if self.btn_minute.ispressed():
                 self.alarm_minute = self.addminute(self.alarm_minute)
             if self.btn_hour.ispressed():
-                self.alrm_hour =self.addhour(self.alarm_hour)
+                self.alarm_hour = self.addhour(self.alarm_hour)
 
             self.display.writeText(self.formattime(self.alarm_hour, self.alarm_minute))      
         else:
@@ -289,8 +313,29 @@ class AlarmClock:
             minutes = d.minute + self.time_minute
             time_string = self.formattime(hours, minutes)
             self.display.writeText(time_string)
+            
+        # Snooze button logic
+        if self.btn_snooze.ispressed() and self.alarm_active:
+            self.alarm_active = False
+            for i in range(5):
+                self.alarm_minute = self.addminute(self.alarm_minute)
+            if self.alarm_minute <= 4:
+                self.alarm_hour = self.addhour(self.alarm_hour)
 
+        d = datetime.datetime.now()
+        hour = d.hour
+        minute = d.minute
+        if hour == self.alarm_hour and minute == self.alarm_minute:
+            self.alarm_active = True
 
+        if self.alarm_active:
+            self.rotateservo(30)
+        else:
+            self.rotateservo(180)
+
+        if self.alarm_active and abs(minute - self.alarm_minute) >= 3:
+            self.alarm_active = False
+        
     def updatelast(self):
         for btn in self.buttons:
             btn.updatelast()
@@ -302,7 +347,7 @@ def main():
         while True:
             alarm_clock.update()
             alarm_clock.updatelast()
-            sleep(.0000001)
+            sleep(.00000000000001)
 
     except KeyboardInterrupt:
         alarm_clock.cleardisplay()
