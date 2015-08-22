@@ -1,3 +1,5 @@
+# Display test code. Used this to determine if our displays work.
+
 import RPi.GPIO as GPIO
 from time import sleep
 
